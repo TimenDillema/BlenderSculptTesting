@@ -9,9 +9,9 @@
 
 #include "BKE_paint.h"
 
-#include "BLI_rect.h"
 #include "BLI_compiler_compat.h"
 #include "BLI_math.h"
+#include "BLI_rect.h"
 
 #include "DNA_scene_types.h"
 
@@ -452,6 +452,19 @@ void paint_get_tex_pixel_col(const struct MTex *mtex,
                              int thread,
                              bool convert,
                              struct ColorSpace *colorspace);
+/**
+ * Returns the intensity of a specific pixel at UV coordinates and outputs the color data in
+ * rgba[4]. which_output determines the texture node output to use.
+ */
+float paint_get_tex_pixel_col_nodes(const struct MTex *mtex,
+                                    float u,
+                                    float v,
+                                    float rgba[4],
+                                    struct ImagePool *pool,
+                                    int thread,
+                                    bool convert,
+                                    struct ColorSpace *colorspace,
+                                    int which_output);
 
 /**
  * Used for both 3D view and image window.

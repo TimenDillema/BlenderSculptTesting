@@ -89,6 +89,7 @@ static const EnumPropertyItem rna_enum_brush_texture_slot_map_texture_mode_items
 
 /* clang-format off */
 const EnumPropertyItem rna_enum_brush_sculpt_tool_items[] = {
+    {SCULPT_TOOL_PBR, "PBR", ICON_BRUSH_SCULPT_DRAW, "Pbr", ""},
     {SCULPT_TOOL_DRAW, "DRAW", ICON_BRUSH_SCULPT_DRAW, "Draw", ""},
     {SCULPT_TOOL_DRAW_SHARP, "DRAW_SHARP", ICON_BRUSH_SCULPT_DRAW, "Draw Sharp", ""},
     {SCULPT_TOOL_CLAY, "CLAY", ICON_BRUSH_CLAY, "Clay", ""},

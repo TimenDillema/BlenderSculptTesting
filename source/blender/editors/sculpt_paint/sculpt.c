@@ -106,8 +106,8 @@
 #include "UI_resources.h"
 
 #include "bmesh.h"
-#include "bmesh_tools.h"
 #include "bmesh_log.h"
+#include "bmesh_tools.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -2880,6 +2880,7 @@ void SCULPT_floodfill_free(SculptFloodFill *flood)
 static bool sculpt_tool_needs_original(const char sculpt_tool)
 {
   return ELEM(sculpt_tool,
+              SCULPT_TOOL_PBR,
               SCULPT_TOOL_GRAB,
               SCULPT_TOOL_ROTATE,
               SCULPT_TOOL_THUMB,
@@ -2932,6 +2933,7 @@ static int sculpt_brush_needs_normal(const SculptSession *ss, const Brush *brush
           ELEM(SCULPT_get_tool(ss, brush),
                SCULPT_TOOL_BLOB,
                SCULPT_TOOL_CREASE,
+               SCULPT_TOOL_PBR,
                SCULPT_TOOL_DRAW,
                SCULPT_TOOL_DRAW_SHARP,
                SCULPT_TOOL_SCENE_PROJECT,
@@ -3083,6 +3085,9 @@ static void paint_mesh_restore_co_task_cb(void *__restrict userdata,
     case SCULPT_TOOL_SMEAR:
       type |= SCULPT_UNDO_COLOR;
       break;
+    case SCULPT_TOOL_PBR:
+      type |= SCULPT_UNDO_COLOR;
+      type |= SCULPT_UNDO_COORDS;
     case SCULPT_TOOL_VCOL_BOUNDARY:
       type |= SCULPT_UNDO_COLOR | SCULPT_UNDO_COORDS;
       break;
@@ -3960,6 +3965,7 @@ static float brush_strength(const Sculpt *sd,
       // final_pressure = pow4f(pressure);
       overlap = (1.0f + overlap) / 2.0f;
       return 0.25f * alpha * flip * pressure * overlap * feather;
+    case SCULPT_TOOL_PBR:
     case SCULPT_TOOL_DRAW:
     case SCULPT_TOOL_DRAW_SHARP:
     case SCULPT_TOOL_LAYER:
@@ -4196,6 +4202,108 @@ float SCULPT_brush_strength_factor(SculptSession *ss,
   /* Auto-masking. */
   avg *= SCULPT_automasking_factor_get(cache->automasking, ss, vertex_index);
 
+  return avg;
+}
+
+float SCULPT_brush_strength_factor_pbr_channels(SculptSession *ss,
+                                                const Brush *br,
+                                                const float brush_point[3],
+                                                const float len,
+                                                const float vno[3],
+                                                const float fno[3],
+                                                const float mask,
+                                                const SculptVertRef vertex_index,
+                                                const int thread_id,
+                                                float rgba[4],
+                                                float *emission,
+                                                float *roughness,
+                                                float *metallic)
+{
+  StrokeCache *cache = ss->cache;
+  const Scene *scene = cache->vc->scene;
+  const MTex *mtex = &br->mtex;
+  float avg = 1.0f;
+  float point[3];
+  UnifiedPaintSettings *ups = &scene->toolsettings->unified_paint_settings;
+  struct ColorSpace *colorspace = ups->colorspace;
+
+  sub_v3_v3v3(point, brush_point, cache->plane_offset);
+
+  if (!mtex->tex) {
+    avg = 1.0f;
+  }
+  else if (mtex->brush_map_mode == MTEX_MAP_MODE_3D) {
+    /* Get strength by feeding the vertex location directly into a texture.*/
+    avg = BKE_brush_sample_tex_3d_nodes(scene, br, point, rgba, 0, ss->tex_pool, 0);
+  }
+  else if (ss->texcache) {
+    float symm_point[3], point_2d[2];
+    /* Quite warnings. */
+    float x = 0.0f, y = 0.0f;
+
+    /* If the active area is being applied for symmetry, flip it
+     * across the symmetry axis and rotate it back to the original
+     * position in order to project it. This insures that the
+     * brush texture will be oriented correctly. */
+    if (cache->radial_symmetry_pass) {
+      mul_m4_v3(cache->symm_rot_mat_inv, point);
+    }
+    flip_v3_v3(symm_point, point, cache->mirror_symmetry_pass);
+
+    ED_view3d_project_float_v2_m4(cache->vc->region, symm_point, point_2d, cache->projection_mat);
+
+    /* Still no symmetry supported for other paint modes.
+     * Sculpt does it DIY. */
+    if (mtex->brush_map_mode == MTEX_MAP_MODE_AREA) {
+      /* Similar to fixed mode, but projects from brush angle
+       * rather than view direction. */
+
+      mul_m4_v3(cache->brush_local_mat, symm_point);
+
+      x = symm_point[0];
+      y = symm_point[1];
+
+      x *= br->mtex.size[0];
+      y *= br->mtex.size[1];
+
+      x += br->mtex.ofs[0];
+      y += br->mtex.ofs[1];
+
+      avg = paint_get_tex_pixel_col_nodes(
+          &br->mtex, x, y, rgba, ss->tex_pool, thread_id, true, colorspace, 0);
+
+      avg += br->texture_sample_bias;
+    }
+    else {
+      const float point_3d[3] = {point_2d[0], point_2d[1], 0.0f};
+      avg = BKE_brush_sample_tex_3d_nodes(scene, br, point_3d, rgba, 0, ss->tex_pool, 0);
+    }
+  }
+
+  /* Hardness. */
+  float final_len = len;
+  const float hardness = cache->paint_brush.hardness;
+  float p = len / cache->radius;
+  if (p < hardness) {
+    final_len = 0.0f;
+  }
+  else if (hardness == 1.0f) {
+    final_len = cache->radius;
+  }
+  else {
+    p = (p - hardness) / (1.0f - hardness);
+    final_len = p * cache->radius;
+  }
+
+  /* Falloff curve. */
+  avg *= BKE_brush_curve_strength(br, final_len, cache->radius);
+  avg *= frontface(br, cache->view_normal, vno, fno);
+
+  /* Paint mask. */
+  avg *= 1.0f - mask;
+
+  /* Auto-masking. */
+  avg *= SCULPT_automasking_factor_get(cache->automasking, ss, vertex_index);
   return avg;
 }
 
@@ -5110,7 +5218,10 @@ static void do_brush_action_task_cb(void *__restrict userdata,
     SCULPT_undo_push_node(data->ob, data->nodes[n], SCULPT_UNDO_MASK);
     BKE_pbvh_node_mark_update_mask(data->nodes[n]);
   }
-  else if (ELEM(SCULPT_get_tool(ss, data->brush), SCULPT_TOOL_PAINT, SCULPT_TOOL_SMEAR)) {
+  else if (ELEM(SCULPT_get_tool(ss, data->brush),
+                SCULPT_TOOL_PBR,
+                SCULPT_TOOL_PAINT,
+                SCULPT_TOOL_SMEAR)) {
     if (!ss->bm) {
       if (data->brush->vcol_boundary_factor > 0.0f) {
         SCULPT_undo_push_node(data->ob, data->nodes[n], SCULPT_UNDO_COORDS);
@@ -5134,6 +5245,7 @@ static bool brush_uses_commandlist(Brush *brush, int tool)
   bool ok = false;
 
   switch (tool) {
+    case SCULPT_TOOL_PBR:
     case SCULPT_TOOL_DRAW:
     case SCULPT_TOOL_DRAW_SHARP:
     case SCULPT_TOOL_CLAY_STRIPS:
@@ -5366,6 +5478,9 @@ void do_brush_action(
 
   /* Apply one type of brush action. */
   switch (SCULPT_get_tool(ss, brush)) {
+    case SCULPT_TOOL_PBR:
+      SCULPT_do_pbr_brush(sd, ob, nodes, totnode);
+      break;
     case SCULPT_TOOL_DRAW:
       SCULPT_do_draw_brush(sd, ob, nodes, totnode);
       break;
@@ -5923,6 +6038,9 @@ static void SCULPT_run_command(
 
   /* Apply one type of brush action. */
   switch (brush2->sculpt_tool) {
+    case SCULPT_TOOL_PBR:
+      SCULPT_do_pbr_brush(sd, ob, nodes, totnode);
+      break;
     case SCULPT_TOOL_DRAW:
       SCULPT_do_draw_brush(sd, ob, nodes, totnode);
       break;
@@ -6770,6 +6888,8 @@ static const char *sculpt_tool_name(Sculpt *sd)
   Brush *brush = BKE_paint_brush(&sd->paint);
 
   switch ((eBrushSculptTool)brush->sculpt_tool) {
+    case SCULPT_TOOL_PBR:
+      return "Pbr Brush";
     case SCULPT_TOOL_DRAW:
       return "Draw Brush";
     case SCULPT_TOOL_SMOOTH:
@@ -8205,7 +8325,8 @@ static void sculpt_brush_stroke_init(bContext *C, wmOperator *op)
   sculpt_brush_init_tex(scene, sd, ss);
 
   is_smooth = sculpt_needs_connectivity_info(sd, brush, ss, mode);
-  needs_colors = ELEM(SCULPT_get_tool(ss, brush), SCULPT_TOOL_PAINT, SCULPT_TOOL_SMEAR);
+  needs_colors = ELEM(
+      SCULPT_get_tool(ss, brush), SCULPT_TOOL_PBR, SCULPT_TOOL_PAINT, SCULPT_TOOL_SMEAR);
 
   if (needs_colors) {
     BKE_sculpt_color_layer_create_if_needed(ob);
@@ -9271,7 +9392,6 @@ void SCULPT_geometry_preview_lines_update(bContext *C, SculptSession *ss, float 
 
   ss->preview_vert_index_count = totpoints;
 }
-
 
 /* Fake Neighbors. */
 /* This allows the sculpt tools to work on meshes with multiple connected components as they had

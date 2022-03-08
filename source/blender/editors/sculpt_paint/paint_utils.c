@@ -188,6 +188,31 @@ void paint_get_tex_pixel_col(const MTex *mtex,
   clamp_v4(rgba, 0.0f, 1.0f);
 }
 
+float paint_get_tex_pixel_col_nodes(const MTex *mtex,
+                                    float u,
+                                    float v,
+                                    float rgba[4],
+                                    struct ImagePool *pool,
+                                    int thread,
+                                    bool convert_to_linear,
+                                    struct ColorSpace *colorspace,
+                                    int which_output)
+{
+  const float co[3] = {u, v, 0.0f};
+  float intensity;
+
+  const bool hasrgb = RE_texture_evaluate(mtex, co, thread, pool, false, false, &intensity, rgba);
+
+  if (!hasrgb) {
+    rgba[0] = intensity;
+    rgba[1] = intensity;
+    rgba[2] = intensity;
+    rgba[3] = 1.0f;
+  }
+  clamp_v4(rgba, 0.0f, 1.0f);
+  return intensity;
+}
+
 void paint_stroke_operator_properties(wmOperatorType *ot, bool mode_skip_save)
 {
   static const EnumPropertyItem stroke_mode_items[] = {

@@ -1290,9 +1290,9 @@ void BKE_brush_channelset_set_final_int(BrushChannelSet *child,
 }
 
 float old_BKE_brush_channelset_get_final_float(BrushChannelSet *child,
-                                           BrushChannelSet *parent,
-                                           const char *idname,
-                                           BrushMappingData *mapdata)
+                                               BrushChannelSet *parent,
+                                               const char *idname,
+                                               BrushMappingData *mapdata)
 {
   BrushChannel *parentch, *childch;
   BrushChannel *ch = brush_channel_final(child, parent, idname, &childch, &parentch);
@@ -1389,10 +1389,10 @@ int BKE_brush_channel_get_vector(BrushChannel *ch, float out[4], BrushMappingDat
 }
 
 int old_BKE_brush_channelset_get_final_vector(BrushChannelSet *child,
-                                          BrushChannelSet *parent,
-                                          const char *idname,
-                                          float r_vec[4],
-                                          BrushMappingData *mapdata)
+                                              BrushChannelSet *parent,
+                                              const char *idname,
+                                              float r_vec[4],
+                                              BrushMappingData *mapdata)
 {
   BrushChannel *parentch, *childch;
   BrushChannel *ch = brush_channel_final(child, parent, idname, &childch, &parentch);
@@ -1602,6 +1602,7 @@ BrushCommand *BKE_brush_command_init(BrushCommand *command, int tool)
   ADDCH("hard_edge_mode");
 
   switch (tool) {
+    case SCULPT_TOOL_PBR:
     case SCULPT_TOOL_DRAW:
       break;
     case SCULPT_TOOL_SMOOTH:

@@ -1476,6 +1476,24 @@ float SCULPT_brush_strength_factor(struct SculptSession *ss,
                                    const float mask,
                                    const SculptVertRef vertex_index,
                                    const int thread_id);
+/**
+ * Returns a multiplier for brush strength on a particular vertex, and gets the albedo, emission,
+ * roughness, and metallic maps from the brush texture nodes
+ */
+
+float SCULPT_brush_strength_factor_pbr_channels(struct SculptSession *ss,
+                                                const struct Brush *br,
+                                                const float point[3],
+                                                float len,
+                                                const float vno[3],
+                                                const float fno[3],
+                                                const float mask,
+                                                const SculptVertRef vertex_index,
+                                                const int thread_id,
+                                                float rgba[4],
+                                                float *emission,
+                                                float *roughness,
+                                                float *metallic);
 
 /**
  * Tilts a normal by the x and y tilt values using the view axis.
@@ -2126,6 +2144,10 @@ void SCULPT_do_displacement_eraser_brush(struct Sculpt *sd,
                                          struct Object *ob,
                                          struct PBVHNode **nodes,
                                          int totnode);
+void SCULPT_do_pbr_brush(struct Sculpt *sd,
+                         struct Object *ob,
+                         struct PBVHNode **nodes,
+                         int totnode);
 void SCULPT_do_draw_brush(struct Sculpt *sd,
                           struct Object *ob,
                           struct PBVHNode **nodes,
@@ -2491,7 +2513,8 @@ void SCULPT_dyntopo_automasking_end(void *mask_data);
 // these tools don't support dynamic pbvh splitting during the stroke
 #define DYNTOPO_HAS_DYNAMIC_SPLIT(tool) true
 
-#define SCULPT_TOOL_NEEDS_COLOR(tool) ELEM(tool, SCULPT_TOOL_PAINT, SCULPT_TOOL_SMEAR)
+#define SCULPT_TOOL_NEEDS_COLOR(tool) \
+  ELEM(tool, SCULPT_TOOL_PBR, SCULPT_TOOL_PAINT, SCULPT_TOOL_SMEAR)
 
 #define SCULPT_stroke_needs_original(brush) \
   ELEM(brush->sculpt_tool, \

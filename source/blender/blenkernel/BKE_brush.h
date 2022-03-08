@@ -113,6 +113,17 @@ float BKE_brush_sample_tex_3d(const struct Scene *scene,
                               float rgba[4],
                               int thread,
                               struct ImagePool *pool);
+/**
+ * Same as BKE_brush_sample_tex_3d, but allows for selecting a specific output when using texture
+ * nodes.
+ */
+float BKE_brush_sample_tex_3d_nodes(const struct Scene *scene,
+                                    const struct Brush *br,
+                                    const float point[3],
+                                    float rgba[4],
+                                    int thread,
+                                    struct ImagePool *pool,
+                                    int which_output);
 float BKE_brush_sample_masktex(const struct Scene *scene,
                                struct Brush *br,
                                const float point[2],

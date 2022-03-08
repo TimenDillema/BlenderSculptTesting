@@ -331,7 +331,7 @@ typedef enum eAutomasking_flag {
   BRUSH_AUTOMASKING_BOUNDARY_FACE_SETS = (1 << 3),
   BRUSH_AUTOMASKING_CONCAVITY = (1 << 4),
   BRUSH_AUTOMASKING_INVERT_CONCAVITY = (1 << 5),
-  BRUSH_AUTOMASKING_BRUSH_NORMAL = (1<<6),
+  BRUSH_AUTOMASKING_BRUSH_NORMAL = (1 << 6),
   BRUSH_AUTOMASKING_VIEW_NORMAL = (1 << 7),
 } eAutomasking_flag;
 
@@ -499,7 +499,8 @@ typedef enum eBrushSculptTool {
   SCULPT_TOOL_AUTO_FSET = 42,
   SCULPT_TOOL_RELAX = 43,
   SCULPT_TOOL_ENHANCE_DETAILS = 44,
-  SCULPT_TOOL_DISPLACEMENT_HEAL = 45
+  SCULPT_TOOL_DISPLACEMENT_HEAL = 45,
+  SCULPT_TOOL_PBR = 46
 } eBrushSculptTool;
 
 /* Brush.uv_sculpt_tool */
@@ -520,6 +521,7 @@ typedef enum eBrushCurvesSculptTool {
 /** When #BRUSH_ACCUMULATE is used */
 #define SCULPT_TOOL_HAS_ACCUMULATE(t) \
   ELEM(t, \
+       SCULPT_TOOL_PBR, \
        SCULPT_TOOL_DRAW, \
        SCULPT_TOOL_DRAW_SHARP, \
        SCULPT_TOOL_SLIDE_RELAX, \

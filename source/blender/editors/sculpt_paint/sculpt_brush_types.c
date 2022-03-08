@@ -307,6 +307,67 @@ static void sculpt_project_v3_normal_align(SculptSession *ss,
 /** \name Sculpt Draw Brush
  * \{ */
 
+static void do_pbr_brush_task_cb_ex(void *__restrict userdata,
+                                    const int n,
+                                    const TaskParallelTLS *__restrict tls)
+{
+  SculptThreadedTaskData *data = userdata;
+  SculptSession *ss = data->ob->sculpt;
+  const Brush *brush = data->brush;
+  const float *offset = data->offset;
+
+  PBVHVertexIter vd;
+  float(*proxy)[3];
+
+  proxy = BKE_pbvh_node_add_proxy(ss->pbvh, data->nodes[n])->co;
+
+  SculptBrushTest test;
+  SculptBrushTestFn sculpt_brush_test_sq_fn = SCULPT_brush_test_init_with_falloff_shape(
+      ss, &test, data->brush->falloff_shape);
+  const int thread_id = BLI_task_parallel_thread_id(tls);
+
+  BKE_pbvh_vertex_iter_begin (ss->pbvh, data->nodes[n], vd, PBVH_ITER_UNIQUE) {
+    if (!sculpt_brush_test_sq_fn(&test, vd.co)) {
+      continue;
+    }
+    float col[4];
+    col[0] = 1.0f;
+    col[1] = 0.0f;
+    col[2] = 0.0f;
+    col[3] = 1.0f;
+    float emission, roughness, metallic;
+
+    // get texture data:
+    const float fade = SCULPT_brush_strength_factor_pbr_channels(ss,
+                                                                 brush,
+                                                                 vd.co,
+                                                                 sqrtf(test.dist),
+                                                                 vd.no,
+                                                                 vd.fno,
+                                                                 vd.mask ? *vd.mask : 0.0f,
+                                                                 vd.vertex,
+                                                                 thread_id,
+                                                                 col,
+                                                                 &emission,
+                                                                 &roughness,
+                                                                 &metallic);
+
+    // perform displacement:
+    mul_v3_v3fl(proxy[vd.i], offset, fade);
+
+    // apply color:
+    float buf[4];
+    SCULPT_vertex_color_get(ss, vd.vertex, buf);
+    blend_color_interpolate_float(col, buf, col, fade);
+    SCULPT_vertex_color_set(ss, vd.vertex, col);
+
+    if (vd.mvert) {
+      BKE_pbvh_vert_mark_update(ss->pbvh, vd.vertex);
+    }
+  }
+  BKE_pbvh_vertex_iter_end;
+}
+
 static void do_draw_brush_task_cb_ex(void *__restrict userdata,
                                      const int n,
                                      const TaskParallelTLS *__restrict tls)
@@ -348,6 +409,47 @@ static void do_draw_brush_task_cb_ex(void *__restrict userdata,
     }
   }
   BKE_pbvh_vertex_iter_end;
+}
+
+void SCULPT_do_pbr_brush(Sculpt *sd, Object *ob, PBVHNode **nodes, int totnode)
+{
+#if 0
+  if (BKE_pbvh_type(ob->sculpt->pbvh) == PBVH_BMESH) {
+    void cxx_do_draw_brush(Sculpt * sd, Object * ob, PBVHNode * *nodes, int totnode);
+
+    cxx_do_draw_brush(sd, ob, nodes, totnode);
+    return;
+  }
+#endif
+
+  SculptSession *ss = ob->sculpt;
+  Brush *brush = BKE_paint_brush(&sd->paint);
+  float offset[3];
+  const float bstrength = ss->cache->bstrength;
+
+  /* Offset with as much as possible factored in already. */
+  float effective_normal[3];
+  SCULPT_tilt_effective_normal_get(ss, brush, effective_normal);
+  mul_v3_v3fl(offset, effective_normal, ss->cache->radius);
+  mul_v3_v3(offset, ss->cache->scale);
+  mul_v3_fl(offset, bstrength);
+
+  /* XXX: this shouldn't be necessary, but sculpting crashes in blender2.8 otherwise
+   * initialize before threads so they can do curve mapping. */
+  BKE_curvemapping_init(brush->curve);
+
+  /* Threaded loop over nodes. */
+  SculptThreadedTaskData data = {
+      .sd = sd,
+      .ob = ob,
+      .brush = brush,
+      .nodes = nodes,
+      .offset = offset,
+  };
+
+  TaskParallelSettings settings;
+  BKE_pbvh_parallel_range_settings(&settings, true, totnode);
+  BLI_task_parallel_range(0, totnode, &data, do_pbr_brush_task_cb_ex, &settings);
 }
 
 void SCULPT_do_draw_brush(Sculpt *sd, Object *ob, PBVHNode **nodes, int totnode)
@@ -2657,7 +2759,7 @@ static void do_elastic_deform_brush_task_cb_ex(void *__restrict userdata,
 
     if (dot_v3v3(final_disp, final_disp) > 0.0000001) {
       if (vd.mvert) {
-      BKE_pbvh_vert_mark_update(ss->pbvh, vd.vertex);
+        BKE_pbvh_vert_mark_update(ss->pbvh, vd.vertex);
       }
     }
 
@@ -3440,7 +3542,7 @@ static void do_fairing_brush_tag_store_task_cb_ex(void *__restrict userdata,
     float *fairing_fade = SCULPT_attr_vertex_data(vd.vertex,
                                                   ss->custom_layers[SCULPT_SCL_FAIRING_FADE]);
     uchar *fairing_mask = SCULPT_attr_vertex_data(vd.vertex,
-                                                 ss->custom_layers[SCULPT_SCL_FAIRING_MASK]);
+                                                  ss->custom_layers[SCULPT_SCL_FAIRING_MASK]);
 
     *fairing_fade = max_ff(fade, *fairing_fade);
     *fairing_mask = true;
@@ -3508,7 +3610,8 @@ void SCULPT_do_fairing_brush(Sculpt *sd, Object *ob, PBVHNode **nodes, int totno
     for (int i = 0; i < totvert; i++) {
       SculptVertRef vertex = BKE_pbvh_table_index_to_vertex(ss->pbvh, i);
 
-      *(uchar *)SCULPT_attr_vertex_data(vertex, ss->custom_layers[SCULPT_SCL_FAIRING_MASK]) = false;
+      *(uchar *)SCULPT_attr_vertex_data(vertex,
+                                        ss->custom_layers[SCULPT_SCL_FAIRING_MASK]) = false;
       *(float *)SCULPT_attr_vertex_data(vertex, ss->custom_layers[SCULPT_SCL_FAIRING_FADE]) = 0.0f;
       copy_v3_v3(
           (float *)SCULPT_attr_vertex_data(vertex, ss->custom_layers[SCULPT_SCL_PREFAIRING_CO]),
@@ -3539,7 +3642,8 @@ static void do_fairing_brush_displace_task_cb_ex(void *__restrict userdata,
   SculptSession *ss = data->ob->sculpt;
   PBVHVertexIter vd;
   BKE_pbvh_vertex_iter_begin (ss->pbvh, data->nodes[n], vd, PBVH_ITER_UNIQUE) {
-    if (!*(uchar *)SCULPT_attr_vertex_data(vd.vertex, ss->custom_layers[SCULPT_SCL_FAIRING_MASK])) {
+    if (!*(uchar *)SCULPT_attr_vertex_data(vd.vertex,
+                                           ss->custom_layers[SCULPT_SCL_FAIRING_MASK])) {
       continue;
     }
     float disp[3];
@@ -4274,7 +4378,7 @@ static void do_displacement_heal_cb(void *__restrict userdata,
         copy_m3_m3(mats[locali], mat);
 
         invert_m3(mat);
-        
+
         float disp[3];
         copy_v3_v3(disp, SCULPT_vertex_co_get(ss, vertex));
         sub_v3_v3(disp, p);
